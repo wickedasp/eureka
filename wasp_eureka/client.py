@@ -5,7 +5,6 @@ Eureka is a service discovery and registration service
 built by Netflix and used in the Spring Cloud stack.
 """
 import asyncio
-import atexit
 import enum
 import uuid
 from http import HTTPStatus
@@ -21,13 +20,6 @@ except ImportError:
 from aiohttp import ClientSession
 
 from .log import logger
-
-_SESSION = ClientSession(headers={
-    # They default to using XML.
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-})
-atexit.register(_SESSION.close)
 
 
 class StatusType(enum.Enum):
@@ -242,13 +234,19 @@ class EurekaClient:
         url = self._eureka_url + path
         logger.debug('Performing %s on %s with payload: %s', method, path,
                      data)
-        async with _SESSION.request(method, url, data=data) as resp:
-            if 400 <= resp.status < 600:
-                # noinspection PyArgumentList
-                raise EurekaException(HTTPStatus(resp.status),
-                                      await resp.text())
-            logger.debug('Result: %s', resp.status)
-            return await resp.json()
+        headers = {
+            # They default to using XML.
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+        }
+        async with ClientSession(headers=headers) as session:
+            async with session.request(method, url, data=data) as resp:
+                if 400 <= resp.status < 600:
+                    # noinspection PyArgumentList
+                    raise EurekaException(HTTPStatus(resp.status),
+                                          await resp.text())
+                logger.debug('Result: %s', resp.status)
+                return await resp.json()
 
     def _generate_instance_id(self) -> str:
         """Generates a unique instance id"""
