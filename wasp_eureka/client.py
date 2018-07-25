@@ -37,7 +37,7 @@ class StatusType(enum.Enum):
 class EurekaClient:
     __slots__ = ('_loop', '_eureka_url', '_app_name', '_port', '_hostname',
                  '_ip_addr', '_instance_id', '_health_check_url',
-                 '_status_page_url')
+                 '_status_page_url', '_session')
 
     def __init__(self,
                  app_name: Optional[str] = None,
@@ -49,7 +49,8 @@ class EurekaClient:
                  loop: Optional[asyncio.AbstractEventLoop] = None,
                  instance_id: Optional[str] = None,
                  health_check_url: Optional[str] = None,
-                 status_page_url: Optional[str] = None):
+                 status_page_url: Optional[str] = None,
+                 session: Optional[ClientSession] = None):
         """
         Naive eureka client, only supports the base operations.
 
@@ -95,6 +96,15 @@ class EurekaClient:
             logger.debug('Status page not provided, rewriting to %s',
                          status_page_url)
         self._status_page_url = status_page_url
+
+        if session is None:
+            headers = {
+                # They default to using XML.
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            }
+            session = ClientSession(headers=headers)
+        self._session = session
 
     async def register(self, *, metadata: Optional[Dict[str, Any]] = None,
                        lease_duration: int = 60,
@@ -234,19 +244,18 @@ class EurekaClient:
         url = self._eureka_url + path
         logger.debug('Performing %s on %s with payload: %s', method, path,
                      data)
-        headers = {
-            # They default to using XML.
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-        }
-        async with ClientSession(headers=headers) as session:
-            async with session.request(method, url, data=data) as resp:
-                if 400 <= resp.status < 600:
-                    # noinspection PyArgumentList
-                    raise EurekaException(HTTPStatus(resp.status),
-                                          await resp.text())
-                logger.debug('Result: %s', resp.status)
-                return await resp.json()
+
+        async with self._session.request(method, url, data=data) as resp:
+            if 400 <= resp.status < 600:
+                # noinspection PyArgumentList
+                raise EurekaException(HTTPStatus(resp.status),
+                                      await resp.text())
+            logger.debug('Result: %s', resp.status)
+            return await resp.json()
+
+    async def close(self):
+        if self._session:
+            return await self._session.close()
 
     def _generate_instance_id(self) -> str:
         """Generates a unique instance id"""
